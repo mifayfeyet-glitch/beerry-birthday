@@ -1,0 +1,117 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, collection, addDoc, onSnapshot, query 
+} from 'firebase/firestore';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+
+// הגדרות Firebase וטוקן מהסביבה
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const authToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+// אתחול Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+export default function App() {
+  const [wishes, setWishes] = useState([]);
+  const [user, setUser] = useState(null);
+  const [sender, setSender] = useState('');
+  const [text, setText] = useState('');
+  const [emoji, setEmoji] = useState('🎂');
+
+  // אימות מותאם אישית או אנונימי - שלב הכרחי לפני גישה ל-Firestore
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (authToken) {
+          await signInWithCustomToken(auth, authToken);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth error:", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // קריאת הברכות מ-Firestore - שימוש בנתיב מורשה
+  useEffect(() => {
+    if (!user) return;
+    // נתיב נתונים ציבורי שמותאם להרשאות הסביבה
+    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'greetings'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setWishes(data);
+    }, (error) => {
+      console.error("Error fetching: ", error.message);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const addWish = async (e) => {
+    e.preventDefault();
+    if (!sender || !text) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'greetings'), {
+        sender, text, emoji, createdAt: new Date()
+      });
+      setSender('');
+      setText('');
+    } catch (err) {
+      console.error("Error adding document: ", err);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-white p-6 font-sans">
+      <header className="text-center mb-10">
+        <h1 className="text-4xl font-bold text-pink-400 mb-2">ברכות חמות מהמשפחה והחברים</h1>
+        <p className="text-slate-400">הוסיפו ברכה חמה לבארי!</p>
+      </header>
+
+      <main className="max-w-2xl mx-auto space-y-6">
+        {wishes.length === 0 ? (
+          <div className="bg-slate-800 p-8 rounded-xl text-center border border-slate-700">
+            <span className="text-4xl">✨</span>
+            <p className="mt-4 text-slate-300">עדיין לא נכתבו ברכות. היו הראשונים!</p>
+          </div>
+        ) : (
+          wishes.map((wish) => (
+            <div key={wish.id} className="bg-slate-800 p-6 rounded-xl border border-slate-700">
+              <div className="flex items-center gap-4 mb-3">
+                <span className="text-2xl">{wish.emoji}</span>
+                <h3 className="font-bold text-lg">מאת: {wish.sender}</h3>
+              </div>
+              <p className="text-slate-300">{wish.text}</p>
+            </div>
+          ))
+        )}
+
+        <form onSubmit={addWish} className="bg-slate-800 p-6 rounded-xl border border-slate-700 mt-10">
+          <h2 className="text-xl font-bold mb-4">רוצים לכתוב ברכה?</h2>
+          <input 
+            className="w-full bg-slate-700 p-2 rounded mb-2 text-white" 
+            placeholder="שם השולח" 
+            value={sender} 
+            onChange={(e) => setSender(e.target.value)}
+          />
+          <textarea 
+            className="w-full bg-slate-700 p-2 rounded mb-2 text-white" 
+            placeholder="כתבו את הברכה..." 
+            value={text} 
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button className="w-full bg-pink-600 py-2 rounded font-bold hover:bg-pink-700 transition">
+            שלחו ברכה! ✍️
+          </button>
+        </form>
+      </main>
+    </div>
+  );
+}
